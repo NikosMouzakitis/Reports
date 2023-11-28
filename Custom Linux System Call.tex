@@ -1,0 +1,105 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+ \usepackage{listings}
+ \lstset{
+  numbers=left,
+  stepnumber=1,    
+  firstnumber=1,
+  numberfirstline=true
+}
+
+\title{Custom Linux system call}
+\author{N.Mouzakitis}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\begin{abstract}
+Creation of a custom Linux system call in RISCV-64
+\end{abstract}
+
+\section{Setup}
+In order to run using qemu-system-riscv64, a Linux environment and reate a new system call,
+Buildroot is used, in conjunction with OpenSBI. The modifications took place in the Buildroot sources 
+and are described in the following section.
+
+\section {Modification in buildroot}
+
+
+    \subsection{output/build/linux-6.1.44/arch/riscv/kernel/syscall\_table.c}
+    \begin{lstlisting}
+
+    // SPDX-License-Identifier: GPL-2.0-only
+    /*
+     * Copyright (C) 2009 Arnd Bergmann <arnd@arndb.de>
+     * Copyright (C) 2012 Regents of the University of California
+      */
+    #include <linux/linkage.h>
+    #include <linux/syscalls.h>
+    #include <asm-generic/syscalls.h>
+    #include <asm/syscall.h>
+
+    #undef __SYSCALL
+    #define __SYSCALL(nr, call)	[nr] = (call),
+
+    void * const sys_call_table[__NR_syscalls] = {
+	    [0 ... __NR_syscalls - 1] = sys_ni_syscall,
+      [__NR_custom_syscall] = sys_custom_syscall,
+    #include <asm/unistd.h>
+    };
+    \end{lstlisting}
+Custom system call modification in line 17.
+\subsection{output/build/linux-6.1.44/arch/riscv/kernel/sys\_riscv.c}
+    \begin{lstlisting}
+// our definition of the custom syscall.
+SYSCALL_DEFINE0(custom_syscall)
+{
+    printk(KERN_ALERT "custom_syscall()\n");
+    return 0;  // Replace with actual return value
+}
+
+    \end{lstlisting}
+Addition in the file, defining and implementing the system call.
+\subsection{output/build/linux-6.1.44/include/uapi/asm-generic/unistd.h}
+    \begin{lstlisting}
+#define __NR_custom_syscall 451
+__SYSCALL(__NR_custom_syscall, sys_custom_syscall)
+
+#undef __NR_syscalls
+#define __NR_syscalls 452
+
+    \end{lstlisting}
+Addition of syscall number 451, and update modification on the total number of system calls.
+
+\section{ Usespace program in the guest, testing the new system call}
+\begin{lstlisting}
+#include <unistd.h>
+#include <errno.h>
+#include <sys/syscall.h>
+#include <stdio.h>
+
+#define SYS_custom_syscall 451
+
+int main() {
+	//testing our custom syscall.
+    printf("testing custom syscall with NR: %d\n", SYS_custom_syscall);
+    long result = syscall(SYS_custom_syscall);
+
+    if (result == -1) {
+        perror("syscall error\n");
+    printf("errno: %ld \n", errno);
+        return 1;
+    }
+
+    printf("System call returned: %ld \n", result);
+
+    return 0;
+}
+
+\end{lstlisting}
+
+\end{document}
