@@ -1,0 +1,64 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+ \usepackage{listings}
+ \lstset{
+  numbers=left,
+  stepnumber=1,    
+  firstnumber=1,
+  numberfirstline=true
+}
+
+\title{Print character in RiscV assembly}
+\author{N.Mouzakitis}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\begin{abstract}
+Print a character in assembly RISCV-64
+\end{abstract}
+\section {Source code}
+     
+    \begin{lstlisting}
+
+.section .data
+    char_to_print:  .byte 'A'  # Character to print
+
+.section .text
+    .globl _start
+
+
+delay:
+    li t1, 1000000000          # Adjust this value based on your processor speed
+delay_loop:
+    addi t1, t1, -1
+    bnez t1, delay_loop
+    ret
+
+_start:
+    li a0, 1                   # File descriptor: STDOUT
+    li a2, 1                   # lenght of print-out
+    la a1, char_to_print       # Pointer to the character to print
+
+    # Loop to print the character 10 times
+    li t0, 1000                  # Number of characters to print
+print_loop:
+    li a7, 64                  # System call number for write
+    ecall
+    call delay
+	# Decrease the counter and check if it's greater than 0
+    addi t0, t0, -1
+    bnez t0, print_loop
+
+    # Exit program
+    li a0, 0                   # Exit code 0
+    li a7, 93                  # System call number for exit
+    ecall
+
+\end{lstlisting}
+
+\end{document}
