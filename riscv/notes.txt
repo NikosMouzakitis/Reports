@@ -1,0 +1,44 @@
+* script for building the opensbi for the riscv platform
+	compiler was downloaded from official git recommendation from RISCV-toolchains.
+
+	x@x2:~/implementations$ cat build-opensbi.sh 
+	#!/bin/bash
+
+	# Set OpenSBI directory
+	OPEN_SBI_DIR="$HOME/implementations/opensbi"
+
+	# Set the cross-compiler
+	RISCV_TOOLCHAIN="$HOME/implementations/riscv64-lp64d--glibc--stable-2024.05-1/bin/riscv64-buildroot-linux-gnu-gcc"
+
+	echo "Using OpenSBI directory: $OPEN_SBI_DIR"
+	echo "Using toolchain: $RISCV_TOOLCHAIN"
+	echo "GCC version: $($RISCV_TOOLCHAIN -v)"
+
+	cd "$OPEN_SBI_DIR" || exit
+
+	# Clean previous build
+	echo "Cleaning previous build..."
+	make distclean
+
+	# Build OpenSBI for QEMU virt platform (RISCV64)
+	echo "Compiling OpenSBI for QEMU virt platform..."
+	make PLATFORM=generic CROSS_COMPILE="${RISCV_TOOLCHAIN%gcc}" -j$(nproc)
+
+	# Optional: show where the firmware ELF was built
+	echo "Firmware ELF location:"
+	echo "$OPEN_SBI_DIR/build/platform/generic/firmware/fw_payload.elf"
+
+	echo "Build finished!"
+
+
+Testing it on qemu-system-riscv64 script:
+
+
+	x@x2:~/implementations$ cat run-qemu-opensbi.sh 
+	#!/bin/bash
+	qemu-system-riscv64 \
+	  -machine virt \
+	  -nographic \
+	  -smp 4 \
+	  -bios /home/x/implementations/opensbi/build/platform/generic/firmware/fw_payload.bin
+
