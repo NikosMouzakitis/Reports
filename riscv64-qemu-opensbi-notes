@@ -1,0 +1,135 @@
+COMPILATION OF OPENSBI for targeet fw_jump.bin
+
+		x@x2:~/implementations$ cat build-opensbi-jump.sh 
+		#!/bin/bash
+
+		# Set OpenSBI directory
+		OPEN_SBI_DIR="$HOME/implementations/opensbi"
+
+		# Set the cross-compiler
+		RISCV_TOOLCHAIN="$HOME/implementations/riscv64-lp64d--glibc--stable-2024.05-1/bin/riscv64-buildroot-linux-gnu-gcc"
+
+		echo "Using OpenSBI directory: $OPEN_SBI_DIR"
+		echo "Using toolchain: $RISCV_TOOLCHAIN"
+		echo "GCC version: $($RISCV_TOOLCHAIN -v)"
+
+		cd "$OPEN_SBI_DIR" || exit
+
+		# Clean previous build
+		echo "Cleaning previous build..."
+		make distclean
+
+		# Build OpenSBI for QEMU virt platform (fw_jump mode)
+		echo "Compiling OpenSBI FW_JUMP firmware..."
+		make PLATFORM=generic FIRMWARE=fw_jump CROSS_COMPILE="${RISCV_TOOLCHAIN%gcc}" -j$(nproc)
+
+		# Show results
+		echo "fw_jump output:"
+		ls -l "$OPEN_SBI_DIR/build/platform/generic/firmware/" | grep fw_jump
+
+		echo "Build finished!"
+
+CREATION OF ROOTFS TO BOOT LINUX
+		x@x2:~/implementations$ cat rootfs-boot-creation.sh 
+		#!/bin/bash
+		set -e
+
+		# Paths
+		BUSYBOX_DIR=~/implementations/riscv-rootfs/busybox
+		ROOTFS_DIR=~/implementations/riscv-rootfs/rootfs
+		IMG_FILE=~/implementations/riscv-rootfs/rootfs.bin
+		CROSS_COMPILE=riscv64-linux-gnu-
+		ARCH=riscv
+
+		# Clean rootfs directory
+		rm -rf $ROOTFS_DIR
+		mkdir -p $ROOTFS_DIR
+
+		# Clone BusyBox if not present
+		if [ ! -d "$BUSYBOX_DIR" ]; then
+		    git clone --branch 1_36_1 git://busybox.net/busybox.git $BUSYBOX_DIR
+		fi
+
+		cd $BUSYBOX_DIR
+
+		# Clean and configure
+		make distclean || true
+		make defconfig
+
+		# Enable static build
+		sed -i 's/.*CONFIG_STATIC.*/CONFIG_STATIC=y/' .config
+		# Disable x86 SHA-NI to fix compilation errors
+		sed -i 's/.*CONFIG_SHA1_X86.*/# CONFIG_SHA1_X86 is not set/' .config
+		sed -i 's/.*CONFIG_SHA2_X86.*/# CONFIG_SHA2_X86 is not set/' .config
+		# Disable Traffic Control (tc) applet
+		sed -i 's/.*CONFIG_TC.*/# CONFIG_TC is not set/' .config
+		sed -i 's/.*CONFIG_TC_INGRESS.*/# CONFIG_TC_INGRESS is not set/' .config
+
+		# Compile and install
+		make -j$(nproc) ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE
+		make install ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE CONFIG_PREFIX=$ROOTFS_DIR
+
+		# Create minimal /etc and /init
+		mkdir -p $ROOTFS_DIR/{etc/init.d,proc,sys,dev,tmp,root}
+		chmod 1777 $ROOTFS_DIR/tmp
+
+		# passwd/shadow
+		echo "root::0:0:root:/root:/bin/sh" > $ROOTFS_DIR/etc/passwd
+		echo "root:x:0:0:root:/root:/bin/sh" > $ROOTFS_DIR/etc/shadow
+
+		# inittab
+		cat > $ROOTFS_DIR/etc/inittab << 'EOF'
+		::sysinit:/etc/init.d/rcS
+		ttyS0::respawn:/bin/sh
+		::ctrlaltdel:/sbin/reboot
+		::shutdown:/bin/umount -a -r
+		EOF
+
+		# init script
+		cat > $ROOTFS_DIR/etc/init.d/rcS << 'EOF'
+		#!/bin/sh
+		mount -t proc proc /proc
+		mount -t sysfs sysfs /sys
+		/sbin/mdev -s
+		EOF
+		chmod +x $ROOTFS_DIR/etc/init.d/rcS
+
+		# Create essential device nodes
+		sudo mknod -m 622 $ROOTFS_DIR/dev/console c 5 1
+		sudo mknod -m 666 $ROOTFS_DIR/dev/null c 1 3
+		sudo mknod -m 666 $ROOTFS_DIR/dev/zero c 1 5
+		sudo mknod -m 666 $ROOTFS_DIR/dev/tty c 5 0
+		sudo mknod -m 666 $ROOTFS_DIR/dev/ttyS0 c 4 64
+
+		# Create rootfs image
+		dd if=/dev/zero of=$IMG_FILE bs=1M count=512
+		mkfs.ext4 $IMG_FILE
+
+		# Copy rootfs into image
+		mkdir -p /tmp/rootfs_loop
+		sudo mount -o loop $IMG_FILE /tmp/rootfs_loop
+		sudo cp -r $ROOTFS_DIR/* /tmp/rootfs_loop/
+		sudo umount /tmp/rootfs_loop
+
+		echo "Done! Bootable rootfs at $IMG_FILE"
+
+		x@x2:~/implementations$ cat run-qemu-opensbi.sh 
+		#!/bin/bash
+		KERNEL=~/implementations/linux/arch/riscv/boot/Image
+		OPENSBI=~/implementations/opensbi/build/platform/generic/firmware/fw_jump.bin
+		ROOTFS=~/implementations/riscv-rootfs/rootfs.bin
+
+RUNNING EMULATION
+
+		qemu-system-riscv64 \
+		  -machine virt \
+		  -nographic \
+		  -smp 1 \
+		  -m 1G \
+		  -bios $OPENSBI \
+		  -kernel $KERNEL \
+		  -append "root=/dev/vda rw console=ttyS0" \
+		  -drive file=$ROOTFS,format=raw,if=none,id=hd0 \
+		  -device virtio-blk-device,drive=hd0
+
+
